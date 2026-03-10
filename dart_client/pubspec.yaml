@@ -1,0 +1,13 @@
+name: rpc_client
+description: A Dart JSON-RPC client for process management with real-time notifications
+version: 1.0.0
+homepage: https://github.com/utsav-56/go-json-rpc
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+# No external dependencies - using only Dart standard library
+dependencies:
+
+dev_dependencies:
+  lints: ^3.0.0
