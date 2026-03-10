@@ -109,6 +109,16 @@ type ProcessRequest struct {
 	onStatusChange func(ProcessStatus)
 }
 
+// SetOnLog sets the callback for process logs
+func (pr *ProcessRequest) SetOnLog(callback func(ProcessLog)) {
+	pr.onLog = callback
+}
+
+// SetOnStatusChange sets the callback for status changes
+func (pr *ProcessRequest) SetOnStatusChange(callback func(ProcessStatus)) {
+	pr.onStatusChange = callback
+}
+
 func (pm *ProcessManager) StartProcess(req *ProcessRequest) error {
 
 	pm.mu.Lock()
@@ -359,4 +369,22 @@ func (pm *ProcessManager) GetProcessLogs(name string) ([]string, error) {
 	}
 
 	return logs, nil
+}
+
+func (pm *ProcessManager) StopAllProcesses() {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	var wg sync.WaitGroup
+
+	for _, process := range pm.processes {
+		wg.Add(1)
+		go func(p *ControlledProcess) {
+			defer wg.Done()
+			p.UpdateStatus(StatusTransitioning, nil)
+			p.Cancel()
+		}(process)
+	}
+
+	wg.Wait()
 }

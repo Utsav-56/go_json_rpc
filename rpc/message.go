@@ -119,9 +119,9 @@ type EventParams struct {
 
 // CommandParams represents command parameters
 type CommandParams struct {
-	Action  string              `json:"action"` // start, stop, get_status, get_logs
-	Process *cmd.ProcessRequest `json:"process,omitempty"`
-	Name    string              `json:"name,omitempty"` // For stop, get_status, get_logs
+	Action  string                `json:"action"` // start, stop, get_status, get_logs
+	Process *cmd.ProcessRequest   `json:"process,omitempty"`
+	Name    string                `json:"name,omitempty"` // For stop, get_status, get_logs
 }
 
 // NotificationParams for server-to-client notifications
