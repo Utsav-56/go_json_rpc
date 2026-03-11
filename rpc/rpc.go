@@ -14,28 +14,6 @@ import (
 
 type rpcFunc func(params interface{}) (interface{}, error)
 
-// ClientConnection represents an active client connection
-type ClientConnection struct {
-	conn    net.Conn
-	encoder *json.Encoder
-	mu      sync.Mutex
-}
-
-func (cc *ClientConnection) SendNotification(notifType string, data interface{}) error {
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
-
-	notification := Notification{
-		Type: MessageTypeNotification,
-		Params: NotificationParams{
-			Type: notifType,
-			Data: data,
-		},
-	}
-
-	return cc.encoder.Encode(notification)
-}
-
 type RpcServer struct {
 	port          int
 	eventHandlers map[string]rpcFunc
@@ -246,11 +224,11 @@ func (s *RpcServer) handleStartProcess(msgID string, cmdParams CommandParams, cl
 
 	// Set up callbacks for this process
 	cmdParams.Process.SetOnLog(func(log cmd.ProcessLog) {
-		s.broadcastNotification("log", log)
+		s.broadcastNotification(NotificationTypeProcessLog, log)
 	})
 
 	cmdParams.Process.SetOnStatusChange(func(status cmd.ProcessStatus) {
-		s.broadcastNotification("status_change", status)
+		s.broadcastNotification(NotificationTypeProcessStatusChanged, status)
 	})
 
 	if err := s.pcsManager.StartProcess(cmdParams.Process); err != nil {
