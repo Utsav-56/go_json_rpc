@@ -1,3 +1,6 @@
+// Package main provides an example server implementation using the JSON-RPC framework.
+// It demonstrates how to create an RPC server, register custom event handlers,
+// and start the server to handle client connections.
 package main
 
 import (
@@ -7,6 +10,10 @@ import (
 	"github.com/utsav-56/go-json-rpc/rpc"
 )
 
+// main initializes and starts the JSON-RPC server with example event handlers.
+// It demonstrates registering three custom events: shutdown, download_file, and health_check.
+// The server listens on port 8080 and supports both custom events and built-in commands
+// for process management (start, stop, get_status, get_logs).
 func main() {
 	ctx := context.Background()
 

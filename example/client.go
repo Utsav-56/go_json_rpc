@@ -1,3 +1,8 @@
+// Package main provides an example client implementation for the JSON-RPC server.
+// It demonstrates how to connect to the server, send commands, receive responses,
+// and handle real-time notifications from the server.
+// The client shows examples of starting processes, querying status, retrieving logs,
+// and calling custom events.
 package main
 
 import (
@@ -8,6 +13,10 @@ import (
 	"time"
 )
 
+// main connects to the RPC server and demonstrates various client operations.
+// It starts a background goroutine to receive notifications and then sends
+// a series of example commands including starting a process, checking status,
+// calling a custom event, and stopping the process.
 func main() {
 	// Connect to RPC server
 	conn, err := net.Dial("tcp", "localhost:8080")
@@ -98,6 +107,11 @@ func main() {
 	time.Sleep(2 * time.Second)
 }
 
+// sendAndReceive encodes and sends a message to the server.
+// This is a helper function that handles JSON encoding and error logging.
+// Parameters:
+//   - conn: the network connection to the server
+//   - message: a map representing the JSON message to send
 func sendAndReceive(conn net.Conn, message map[string]interface{}) {
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(message); err != nil {
@@ -106,6 +120,13 @@ func sendAndReceive(conn net.Conn, message map[string]interface{}) {
 	}
 }
 
+// receiveNotifications continuously reads and handles messages from the server.
+// This function runs in a goroutine to receive notifications without blocking the main thread.
+// Running it in a goroutine allows the client to both send requests and receive asynchronous
+// notifications simultaneously. It distinguishes between notification messages (pushed by the server)
+// and response messages (replies to client requests) and formats them appropriately.
+// Parameters:
+//   - conn: the network connection to read from
 func receiveNotifications(conn net.Conn) {
 	decoder := json.NewDecoder(conn)
 
@@ -145,6 +166,10 @@ func receiveNotifications(conn net.Conn) {
 	}
 }
 
+// prettyPrint formats and displays data as indented JSON for better readability.
+// This helper function makes it easier to read complex response structures.
+// Parameters:
+//   - data: the data to format and print
 func prettyPrint(data interface{}) {
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {

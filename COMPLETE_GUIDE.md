@@ -104,6 +104,7 @@ go build -o server
 ```
 
 Output:
+
 ```
 Starting RPC server on port 8080...
 Registered events: shutdown, download_file, health_check
@@ -120,6 +121,7 @@ dart run example/example.dart
 ```
 
 Output:
+
 ```
 Connecting to RPC server...
 Connected successfully!
@@ -128,7 +130,7 @@ Connected successfully!
 1️⃣  Starting a process...
 ------------------------------------------------------------
 🟡 [STATUS] test-echo -> transitioning
-✅ Process 'test-echo' started successfully
+Process 'test-echo' started successfully
 🟢 [STATUS] test-echo -> running
 📝 [LOG] test-echo (stdout): Line 1
 📝 [LOG] test-echo (stdout): Line 2
@@ -154,6 +156,7 @@ Connected successfully!
 ```
 
 **Actions:**
+
 - `start`: Launch a process
 - `stop`: Terminate a process
 - `get_status`: Query process status
@@ -173,6 +176,7 @@ Connected successfully!
 ```
 
 **Predefined Events:**
+
 - `shutdown`: Graceful server shutdown
 - `download_file`: Download file request
 - `health_check`: Server health check
@@ -180,6 +184,7 @@ Connected successfully!
 #### 3. Response (Server → Client)
 
 **Success:**
+
 ```json
 {
   "id": "req-001",
@@ -192,15 +197,16 @@ Connected successfully!
 ```
 
 **Error:**
+
 ```json
 {
-  "id": "req-001",
-  "type": "error",
-  "result": {
-    "type": "invalid_message_format|internal_error|conversion_error",
-    "message": "...",
-    "timestamp": 1678450800
-  }
+	"id": "req-001",
+	"type": "error",
+	"result": {
+		"type": "invalid_message_format|internal_error|conversion_error",
+		"message": "...",
+		"timestamp": 1678450800
+	}
 }
 ```
 
@@ -217,35 +223,37 @@ Connected successfully!
 ```
 
 **Log Notification:**
+
 ```json
 {
-  "type": "notification",
-  "params": {
-    "type": "log",
-    "data": {
-      "type": "stdout|stderr",
-      "process_name": "my-app",
-      "log": "Application started",
-      "timestamp": 1678450805000
-    }
-  }
+	"type": "notification",
+	"params": {
+		"type": "log",
+		"data": {
+			"type": "stdout|stderr",
+			"process_name": "my-app",
+			"log": "Application started",
+			"timestamp": 1678450805000
+		}
+	}
 }
 ```
 
 **Status Change Notification:**
+
 ```json
 {
-  "type": "notification",
-  "params": {
-    "type": "status_change",
-    "data": {
-      "name": "my-app",
-      "pid": 12345,
-      "start_time": 1678450800000,
-      "status": "running|stopped|transitioning",
-      "exit_code": 0  // Only present when stopped
-    }
-  }
+	"type": "notification",
+	"params": {
+		"type": "status_change",
+		"data": {
+			"name": "my-app",
+			"pid": 12345,
+			"start_time": 1678450800000,
+			"status": "running|stopped|transitioning",
+			"exit_code": 0 // Only present when stopped
+		}
+	}
 }
 ```
 
@@ -273,9 +281,9 @@ Connected successfully!
 ```go
 server.RegisterEvent("custom_event", func(params interface{}) (interface{}, error) {
     data := params.(map[string]interface{})
-    
+
     // Your logic here
-    
+
     return map[string]interface{}{
         "status": "processed",
         "data": data,
@@ -288,6 +296,7 @@ server.RegisterEvent("custom_event", func(params interface{}) (interface{}, erro
 ### Key Features
 
 1. **Response Handler Registry**
+
    ```dart
    client.onSuccess((response) { ... });
    client.onError((response) { ... });
@@ -296,17 +305,19 @@ server.RegisterEvent("custom_event", func(params interface{}) (interface{}, erro
    ```
 
 2. **Notification Listeners**
+
    ```dart
-   client.onLog((log) { 
+   client.onLog((log) {
      print('[${log.processName}] ${log.log}');
    });
-   
+
    client.onStatusChange((status) {
      print('${status.name} -> ${status.status}');
    });
    ```
 
 3. **Async/Await API**
+
    ```dart
    final response = await client.startProcess(request);
    if (response.isSuccess) {
@@ -326,17 +337,17 @@ import 'package:rpc_client/rpc_client.dart';
 
 void main() async {
   final client = RpcClient(host: 'localhost', port: 8080);
-  
+
   try {
     // Connect
     await client.connect();
-    
+
     // Register handlers
     client.onLog((log) => print(log));
     client.onStatusChange((status) => print(status));
-    client.onSuccess((response) => print('✅ ${response.successData?.message}'));
+    client.onSuccess((response) => print('${response.successData?.message}'));
     client.onError((response) => print('❌ ${response.error?.message}'));
-    
+
     // Start process
     final process = ProcessRequest(
       name: 'worker',
@@ -344,19 +355,19 @@ void main() async {
       args: ['-u', 'worker.py'],
       workDir: '/path/to/project',
     );
-    
+
     await client.startProcess(process);
-    
+
     // Wait for logs...
     await Future.delayed(Duration(seconds: 5));
-    
+
     // Get status
     final status = await client.getProcessStatus('worker');
     print(status.successData?.data);
-    
+
     // Stop process
     await client.stopProcess('worker');
-    
+
   } finally {
     await client.disconnect();
   }
@@ -381,14 +392,14 @@ if _, exists := pm.processes[name]; !exists {
 ```dart
 try {
   final response = await client.startProcess(request);
-  
+
   if (response.isSuccess) {
     // Success path
     print(response.successData?.message);
   } else {
     // Error path
     final error = response.error!;
-    
+
     switch (error.type) {
       case ErrorType.invalidFormat:
         print('Invalid message');
@@ -411,29 +422,33 @@ try {
 ## Performance Characteristics
 
 ### Go Server
-- ✅ O(1) process lookup (map-based)
-- ✅ Non-blocking I/O
-- ✅ Concurrent client handling
-- ✅ Minimal lock contention
-- ✅ Efficient log buffering (last 100 lines)
+
+- O(1) process lookup (map-based)
+- Non-blocking I/O
+- Concurrent client handling
+- Minimal lock contention
+- Efficient log buffering (last 100 lines)
 
 ### Dart Client
-- ✅ Stream-based socket reading
-- ✅ Efficient buffer management (StringBuffer)
-- ✅ Async/await non-blocking
-- ✅ No external dependencies
-- ✅ Small memory footprint
+
+- Stream-based socket reading
+- Efficient buffer management (StringBuffer)
+- Async/await non-blocking
+- No external dependencies
+- Small memory footprint
 
 ## Testing
 
 ### Manual Testing
 
 1. **Start Server**
+
    ```bash
    cd example/server && ./server
    ```
 
 2. **Run Client Example**
+
    ```bash
    cd dart_client && dart run example/example.dart
    ```
@@ -460,12 +475,14 @@ nc localhost 8080
 ## Best Practices
 
 ### Server
+
 1. Register events before starting server
 2. Use context for graceful shutdown
 3. Handle process cleanup properly
 4. Log errors appropriately
 
 ### Client
+
 1. Always call `disconnect()` in finally block
 2. Register handlers before connecting
 3. Check response types before accessing data
@@ -504,15 +521,19 @@ go_json_rpc/
 ## Common Issues & Solutions
 
 ### Issue: Connection Refused
+
 **Solution**: Ensure Go server is running on specified port
 
 ### Issue: No Notifications Received
+
 **Solution**: Register handlers before sending commands
 
 ### Issue: Process Already Exists
+
 **Solution**: Each process name must be unique
 
 ### Issue: Dart Analysis Warnings
+
 **Solution**: Run `dart fix --apply` to auto-fix
 
 ## License
