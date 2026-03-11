@@ -6,6 +6,9 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/utsav-56/go-json-rpc/rpc"
 )
@@ -15,10 +18,23 @@ import (
 // The server listens on port 8080 and supports both custom events and built-in commands
 // for process management (start, stop, get_status, get_logs).
 func main() {
-	ctx := context.Background()
+	// Create a context that can be cancelled on interrupt signals
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Create RPC server on port 8080
-	server := rpc.NewRpcServer(8080, ctx)
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Create RPC server configuration
+	config := rpc.RpcServerConfig{
+		UseTcp:   true,
+		Port:     8080,
+		PipeName: "", // Not used when UseTcp is true
+	}
+
+	// Create RPC server with configuration
+	server := rpc.NewRpcServer(config)
 
 	// Register custom event handlers
 	server.RegisterEvent("shutdown", func(params interface{}) (interface{}, error) {
@@ -58,9 +74,27 @@ func main() {
 		}, nil
 	})
 
-	// Start the RPC server
-	log.Println("Starting RPC server on port 8080...")
-	log.Println("Registered events: shutdown, download_file, health_check")
-	log.Println("Available commands: start, stop, get_status, get_logs")
-	server.Start()
+	// Start the RPC server in a goroutine
+	go func() {
+		log.Println("Starting RPC server on port 8080...")
+		log.Println("Registered events: shutdown, download_file, health_check")
+		log.Println("Available commands: start, stop, get_status, get_logs")
+		if err := server.StartWithContext(ctx); err != nil {
+			log.Printf("Server error: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	<-sigChan
+	log.Println("Interrupt signal received, shutting down...")
+
+	// Cancel the context to trigger graceful shutdown
+	cancel()
+
+	// Optionally call Shutdown explicitly for immediate cleanup
+	if err := server.Shutdown(); err != nil {
+		log.Printf("Error during shutdown: %v", err)
+	}
+
+	log.Println("Server stopped")
 }

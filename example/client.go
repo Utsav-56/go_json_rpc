@@ -3,6 +3,8 @@
 // and handle real-time notifications from the server.
 // The client shows examples of starting processes, querying status, retrieving logs,
 // and calling custom events.
+// NOTE: This file should be built separately from main.go
+// Build with: go build -o client client.go
 package main
 
 import (
@@ -13,19 +15,42 @@ import (
 	"time"
 )
 
+// connectToServer connects to the RPC server based on configuration.
+// It supports both TCP and Unix socket/named pipe connections.
+// Parameters:
+//   - useTcp: whether to use TCP connection
+//   - address: TCP address (e.g., "localhost:8080") or Unix socket/pipe path
+//
+// Returns the network connection or an error.
+func connectToServer(useTcp bool, address string) (net.Conn, error) {
+	if useTcp {
+		return net.Dial("tcp", address)
+	}
+	// For Unix systems, use "unix" network
+	// For Windows, use the named pipe path directly with "tcp" would require different handling
+	// This example focuses on TCP for cross-platform compatibility
+	return net.Dial("unix", address)
+}
+
 // main connects to the RPC server and demonstrates various client operations.
 // It starts a background goroutine to receive notifications and then sends
 // a series of example commands including starting a process, checking status,
 // calling a custom event, and stopping the process.
 func main() {
+	// Configure connection - change these values based on server configuration
+	useTcp := true
+	address := "localhost:8080" // For TCP
+	// address := "/tmp/go_rpc.sock" // For Unix socket (Linux/Mac)
+	// address := `\\.\pipe\go_rpc` // For Windows named pipe
+
 	// Connect to RPC server
-	conn, err := net.Dial("tcp", "localhost:8080")
+	conn, err := connectToServer(useTcp, address)
 	if err != nil {
 		log.Fatalf("Failed to connect to RPC server: %v", err)
 	}
 	defer conn.Close()
 
-	fmt.Println("Connected to RPC server on localhost:8080")
+	fmt.Printf("Connected to RPC server at %s\n", address)
 	fmt.Println("--------------------------------------------------")
 
 	// Start receiving notifications in background

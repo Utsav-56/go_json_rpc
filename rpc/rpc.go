@@ -32,7 +32,7 @@ type rpcFunc func(params interface{}) (interface{}, error)
 // The server supports both commands for process management and custom event handlers.
 type RpcServer struct {
 	// port is the TCP port number where the server listens for connections.
-	port int
+	Config RpcServerConfig
 
 	// eventHandlers maps event names to their handler functions.
 	// Custom events can be registered to extend the server functionality.
@@ -45,6 +45,9 @@ type RpcServer struct {
 	// ctx is the server context used for managing the server lifecycle.
 	ctx context.Context
 
+	// cancel is the context cancellation function for graceful shutdown.
+	cancel context.CancelFunc
+
 	// connections holds all active client connections for broadcasting.
 	// Each connection has its own encoder for sending notifications.
 	connections map[net.Conn]*ClientConnection
@@ -52,22 +55,73 @@ type RpcServer struct {
 	// connMu protects concurrent access to the connections map.
 	// This ensures thread-safe operations when clients connect or disconnect.
 	connMu sync.RWMutex
+
+	// listener is the network listener for accepting connections.
+	// This is stored to enable graceful shutdown.
+	listener net.Listener
+
+	// listenerMu protects access to the listener.
+	listenerMu sync.Mutex
+
+	// shutdownWg tracks active connection handlers for graceful shutdown.
+	shutdownWg sync.WaitGroup
+}
+
+type RpcServerConfig struct {
+	// UseTcp indicates whether the server should listen for TCP connections.
+	// if false then the server will serve on local named pipe or unix socket depending on the platform.
+	// this will be best if the server is only accessed by local clients and you want to avoid exposing a TCP port.
+	// also local pipes are generally faster than TCP for local communication.
+	UseTcp bool `json:"use_tcp"`
+
+	// Address is the TCP address to listen on (e.g. "localhost:8080").
+	// This is only used if UseTcp is true. If UseTcp is false, this field is ignored.
+	Port int `json:"port"`
+
+	// PipeName is the name of the local pipe or socket to listen on.
+	// This is only used if UseTcp is false. If UseTcp is true, this field is ignored.
+	PipeName string `json:"pipe_name"`
 }
 
 // NewRpcServer creates a new RPC server instance.
 // It initializes the process manager and connection tracking.
 // Parameters:
-//   - port: the TCP port number where the server will listen
-//   - ctx: the context for managing server and process lifecycles
+//   - config: the configuration for the RPC server
 //
 // Returns a pointer to a new RpcServer ready to accept connections.
-func NewRpcServer(port int, ctx context.Context) *RpcServer {
+func NewRpcServer(config RpcServerConfig) *RpcServer {
 	return &RpcServer{
-		port:        port,
-		pcsManager:  cmd.NewProcessManager(ctx),
-		ctx:         ctx,
-		connections: make(map[net.Conn]*ClientConnection),
+		Config:        config,
+		connections:   make(map[net.Conn]*ClientConnection),
+		eventHandlers: make(map[string]rpcFunc),
 	}
+}
+
+func isPortAvailable(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
+
+func (c *RpcServerConfig) Validate() error {
+	if c.UseTcp {
+		if c.Port <= 0 || c.Port > 65535 {
+			return fmt.Errorf("Invalid port number: %d", c.Port)
+		}
+
+		if !isPortAvailable(c.Port) {
+			return fmt.Errorf("Port %d is already in use", c.Port)
+		}
+
+	} else {
+		if c.PipeName == "" {
+			return fmt.Errorf("Pipe name is required when UseTcp is false but was not provided")
+		}
+	}
+	return nil
 }
 
 // RegisterEvent registers a custom event handler with the server.
@@ -115,31 +169,6 @@ func (s *RpcServer) SendError(conn net.Conn, errMsg string, errType string) {
 		},
 	}
 	s.SendResponse(conn, errorResponse)
-}
-
-// Start begins listening for client connections on the configured port.
-// This method blocks and runs the server loop indefinitely.
-// For each incoming connection, it spawns a goroutine to handle that client.
-// The goroutine approach allows multiple clients to connect simultaneously and operate independently.
-// Each client connection is handled concurrently without blocking other clients.
-// The server will log a fatal error and exit if it cannot bind to the port.
-func (s *RpcServer) Start() {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
-	if err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
-	defer ln.Close()
-	log.Printf("RPC Server started on port %d", s.port)
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			log.Printf("Failed to accept connection: %v", err)
-			continue
-		}
-		go s.handleConnection(conn)
-	}
-
 }
 
 // handleConnection processes messages from a single client connection.

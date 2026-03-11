@@ -1,6 +1,6 @@
 # Go JSON-RPC Process Manager
 
-A lightweight, high-performance JSON-RPC server implementation in Go that provides complete lifecycle management for external processes with real-time monitoring and log streaming capabilities.
+A lightweight, high-performance JSON-RPC server implementation in Go that provides complete lifecycle management for external processes with real-time monitoring, log streaming capabilities, and cross-platform support for both TCP and local pipes.
 
 ## What is This Project?
 
@@ -8,11 +8,13 @@ Go JSON-RPC Process Manager is a robust server framework that allows you to star
 
 ## Key Features
 
+- **Cross-Platform Communication**: Support for TCP sockets and local named pipes/Unix sockets
 - **Process Management**: Start, stop, and monitor multiple processes concurrently
 - **Real-Time Log Streaming**: Capture stdout and stderr with live broadcast to all connected clients
 - **Status Monitoring**: Track process states (running, stopped, transitioning) with PID and exit codes
 - **Custom Event Handlers**: Register and invoke application-specific event handlers
 - **Multi-Client Support**: Handle multiple simultaneous client connections with independent streams
+- **Context-Based Lifecycle**: Graceful shutdown with proper resource cleanup using Go contexts
 - **Thread-Safe Operations**: Full concurrent access protection with mutex-based synchronization
 - **Persistent Logging**: Optional file-based log storage with in-memory caching
 - **Graceful Shutdown**: Clean termination of processes with proper resource cleanup
@@ -131,14 +133,45 @@ package main
 import (
     "context"
     "log"
+    "os"
+    "os/signal"
+    "syscall"
     "github.com/utsav-56/go-json-rpc/rpc"
 )
 
 func main() {
-    ctx := context.Background()
+    // Create a context for graceful shutdown
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+
+    // Set up signal handling
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+    // Create RPC server configuration
+    // Option 1: TCP connection (cross-platform)
+    config := rpc.RpcServerConfig{
+        UseTcp:   true,
+        Port:     8080,
+        PipeName: "", // Not used when UseTcp is true
+    }
+
+    // Option 2: Unix socket (Linux/Mac)
+    // config := rpc.RpcServerConfig{
+    //     UseTcp:   false,
+    //     Port:     0,
+    //     PipeName: "/tmp/go_rpc.sock",
+    // }
+
+    // Option 3: Named pipe (Windows)
+    // config := rpc.RpcServerConfig{
+    //     UseTcp:   false,
+    //     Port:     0,
+    //     PipeName: "go_rpc", // Will become \\.\pipe\go_rpc
+    // }
 
     // Create RPC server
-    server := rpc.NewRpcServer(8080, ctx)
+    server := rpc.NewRpcServer(config)
 
     // Register custom event handler
     server.RegisterEvent("health_check", func(params interface{}) (interface{}, error) {
@@ -148,9 +181,23 @@ func main() {
         }, nil
     })
 
-    // Start server
-    log.Println("Starting RPC server on port 8080...")
-    server.Start()
+    // Start server with context
+    go func() {
+        log.Println("Starting RPC server...")
+        if err := server.StartWithContext(ctx); err != nil {
+            log.Printf("Server error: %v", err)
+        }
+    }()
+
+    // Wait for interrupt signal
+    <-sigChan
+    log.Println("Shutting down...")
+
+    // Trigger graceful shutdown
+    cancel()
+    if err := server.Shutdown(); err != nil {
+        log.Printf("Shutdown error: %v", err)
+    }
 }
 ```
 
@@ -166,9 +213,12 @@ import (
 )
 
 func main() {
-    // Connect to server
+    // Connect to server (TCP)
     conn, _ := net.Dial("tcp", "localhost:8080")
     defer conn.Close()
+
+    // For Unix socket: net.Dial("unix", "/tmp/go_rpc.sock")
+    // For Windows pipe: Special handling required with winio package
 
     // Start a process
     startCmd := map[string]interface{}{
@@ -201,6 +251,106 @@ func main() {
 ```
 
 ## API Reference
+
+### Server Configuration
+
+The `RpcServerConfig` struct configures how the server listens for connections:
+
+```go
+type RpcServerConfig struct {
+    // UseTcp indicates whether to use TCP connections (true) or local pipes (false)
+    UseTcp bool
+
+    // Port is the TCP port number (1-65535) when UseTcp is true
+    Port int
+
+    // PipeName is the socket/pipe name when UseTcp is false
+    // - Linux/Mac: Path like "/tmp/my_socket.sock"
+    // - Windows: Name like "my_pipe" (becomes \\.\pipe\my_pipe)
+    PipeName string
+}
+```
+
+### Server Methods
+
+#### `NewRpcServer(config RpcServerConfig) *RpcServer`
+
+Creates a new RPC server instance with the given configuration.
+
+#### `Start() error`
+
+Starts the server with `context.Background()`. Blocks until server stops.
+
+#### `StartWithContext(ctx context.Context) error`
+
+Starts the server with a custom context for lifecycle management. When the context is cancelled, the server performs graceful shutdown. This is the recommended method for production use.
+
+#### `Shutdown() error`
+
+Initiates graceful shutdown: closes listener, disconnects clients, waits for handlers to finish, and cleans up resources.
+
+#### `RegisterEvent(name string, handler func(params interface{}) (interface{}, error))`
+
+Registers a custom event handler that clients can invoke.
+
+### Connection Types
+
+#### TCP Connection (Cross-Platform)
+
+```go
+config := rpc.RpcServerConfig{
+    UseTcp:   true,
+    Port:     8080,
+    PipeName: "",
+}
+// Client: net.Dial("tcp", "localhost:8080")
+```
+
+#### Unix Socket (Linux/Mac)
+
+```go
+config := rpc.RpcServerConfig{
+    UseTcp:   false,
+    Port:     0,
+    PipeName: "/tmp/go_rpc.sock",
+}
+// Client: net.Dial("unix", "/tmp/go_rpc.sock")
+```
+
+#### Named Pipe (Windows)
+
+```go
+config := rpc.RpcServerConfig{
+    UseTcp:   false,
+    Port:     0,
+    PipeName: "go_rpc",
+}
+// Client: winio.DialPipe(`\\.\pipe\go_rpc`, nil)
+```
+
+### Graceful Shutdown
+
+The server supports graceful shutdown through context cancellation:
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+
+go func() {
+    server.StartWithContext(ctx)
+}()
+
+// Later, to shut down:
+cancel()              // Triggers shutdown
+server.Shutdown()     // Waits for cleanup
+```
+
+During shutdown:
+
+1. Listener stops accepting new connections
+2. Existing client connections are closed
+3. Active request handlers complete
+4. Process manager stops all managed processes
+5. Resources are cleaned up (Unix sockets removed, etc.)
 
 ### Commands
 
@@ -406,12 +556,110 @@ go_json_rpc/
 ├── rpc/                   # JSON-RPC server package
 │   ├── rpc.go            # Server implementation
 │   ├── message.go        # Protocol types and messages
-│   └── connections.go    # Client connection management
+│   ├── connections.go    # Client connection management
+│   ├── serve_unix.go     # Unix/Linux server implementation
+│   └── serve_windows.go  # Windows server implementation
 ├── example/              # Example implementations
 │   ├── main.go          # Server example with custom events
 │   └── client.go        # Client example with all features
 ├── dart_client/         # Dart client implementation
 └── README.md           # This file
+```
+
+## Recent Changes (v2.0)
+
+### Breaking Changes
+
+- **Constructor Change**: `NewRpcServer` now accepts only `RpcServerConfig` instead of port and context
+
+   ```go
+   // Old (v1.x)
+   server := rpc.NewRpcServer(8080, ctx)
+
+   // New (v2.0)
+   config := rpc.RpcServerConfig{UseTcp: true, Port: 8080}
+   server := rpc.NewRpcServer(config)
+   ```
+
+### New Features
+
+- **Cross-Platform Communication**: Support for both TCP and local pipes/sockets
+   - TCP connections for network access (cross-platform)
+   - Unix sockets for Linux/Mac (faster local communication)
+   - Named pipes for Windows (native Windows IPC)
+
+- **Context-Based Lifecycle Management**:
+   - New `StartWithContext(ctx)` method for better control
+   - `Start()` method now calls `StartWithContext` with `context.Background()`
+   - Graceful shutdown when context is cancelled
+
+- **Enhanced Shutdown**:
+   - `Shutdown()` method for explicit cleanup
+   - Closes listener to reject new connections
+   - Waits for active handlers to complete
+   - Properly cleans up Unix sockets and resources
+
+- **Better Error Handling**:
+   - Context cancellation properly handled
+   - Listener errors differentiate between shutdown and failures
+   - Resource cleanup on all exit paths
+
+### Migration Guide
+
+If you're upgrading from v1.x:
+
+1. Update server creation:
+
+   ```go
+   // Old
+   server := rpc.NewRpcServer(8080, ctx)
+
+   // New
+   config := rpc.RpcServerConfig{UseTcp: true, Port: 8080}
+   server := rpc.NewRpcServer(config)
+   ```
+
+2. Update server start (recommended):
+
+   ```go
+   // Old
+   server.Start()
+
+   // New (preferred)
+   ctx, cancel := context.WithCancel(context.Background())
+   go server.StartWithContext(ctx)
+   // ... later for shutdown
+   cancel()
+   server.Shutdown()
+   ```
+
+3. Add graceful shutdown handling:
+
+   ```go
+   sigChan := make(chan os.Signal, 1)
+   signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+   <-sigChan
+   cancel()              // Trigger shutdown
+   server.Shutdown()     // Wait for cleanup
+   ```
+
+## Building Examples
+
+Since both example files contain `main` functions, build them separately:
+
+```bash
+# Build server
+go build -o server example/main.go
+
+# Build client
+go build -o client example/client.go
+
+# Run server
+./server
+
+# Run client (in another terminal)
+./client
 ```
 
 ## Contributing
@@ -431,6 +679,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Distributed process management across multiple servers
 - Metrics and monitoring endpoints
 - HTTP REST API alongside JSON-RPC
+- TLS/SSL support for encrypted connections
 
 ## Acknowledgments
 
