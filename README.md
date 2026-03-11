@@ -207,46 +207,73 @@ func main() {
 package main
 
 import (
-    "encoding/json"
-    "net"
+    "context"
     "log"
+    "os"
+    "os/signal"
+    "syscall"
+    "github.com/utsav-56/go-json-rpc/rpc"
+    "github.com/utsav-56/go-json-rpc/cmd"
 )
 
 func main() {
-    // Connect to server (TCP)
-    conn, _ := net.Dial("tcp", "localhost:8080")
-    defer conn.Close()
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
 
-    // For Unix socket: net.Dial("unix", "/tmp/go_rpc.sock")
-    // For Windows pipe: Special handling required with winio package
+    // Set up signal handling
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-    // Start a process
-    startCmd := map[string]interface{}{
-        "id":   "req-001",
-        "type": "command",
-        "params": map[string]interface{}{
-            "action": "start",
-            "process": map[string]interface{}{
-                "name":    "my-app",
-                "command": "python",
-                "args":    []string{"app.py"},
-                "work_dir": "/path/to/app",
-            },
+    // Configure client
+    config := rpc.RpcClientConfig{
+        UseTcp:   true,
+        Address:  "localhost:8080",
+        PipeName: "",
+    }
+
+    // Create client
+    client := rpc.NewRpcClient(config)
+
+    // Set up notification handler (non-blocking)
+    client.SetNotificationHandler(func(notification rpc.Notification) {
+        // Handle notifications asynchronously
+        log.Printf("Notification: %+v", notification)
+    })
+
+    // Set up error handler
+    client.SetErrorHandler(func(err error) {
+        log.Printf("Client error: %v", err)
+    })
+
+    // Start client (non-blocking)
+    if err := client.StartWithContext(ctx); err != nil {
+        log.Fatalf("Failed to start client: %v", err)
+    }
+
+    // Send command with response handler (non-blocking)
+    client.SendCommand(rpc.CommandParams{
+        Action: rpc.CommandTypeStart,
+        Process: &cmd.ProcessRequest{
+            Name:    "my-app",
+            Command: "python",
+            Args:    []string{"app.py"},
         },
-    }
+    }, func(response rpc.Response) {
+        // Handle response asynchronously
+        log.Printf("Process started: %+v", response)
+    })
 
-    encoder := json.NewEncoder(conn)
-    encoder.Encode(startCmd)
+    // Send event with response handler
+    client.SendEvent(rpc.EventParams{
+        Name: "health_check",
+    }, func(response rpc.Response) {
+        log.Printf("Health check: %+v", response)
+    })
 
-    // Receive response and notifications
-    decoder := json.NewDecoder(conn)
-    for {
-        var msg map[string]interface{}
-        if err := decoder.Decode(&msg); err != nil {
-            break
-        }
-        log.Printf("Received: %+v", msg)
-    }
+    // Wait for interrupt
+    <-sigChan
+    cancel()
+    client.Shutdown()
 }
 ```
 
@@ -327,6 +354,207 @@ config := rpc.RpcServerConfig{
 }
 // Client: winio.DialPipe(`\\.\pipe\go_rpc`, nil)
 ```
+
+### Graceful Shutdown
+
+The server supports graceful shutdown through context cancellation:
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+
+go func() {
+    server.StartWithContext(ctx)
+}()
+
+// Later, to shut down:
+cancel()              // Triggers shutdown
+server.Shutdown()     // Waits for cleanup
+```
+
+During shutdown:
+
+1. Listener stops accepting new connections
+2. Existing client connections are closed
+3. Active request handlers complete
+4. Process manager stops all managed processes
+5. Resources are cleaned up (Unix sockets removed, etc.)
+
+## RPC Client API
+
+The RPC client provides a non-blocking, handler-based interface for interacting with the server. It supports context-based lifecycle management and graceful shutdown.
+
+### Client Configuration
+
+```go
+type RpcClientConfig struct {
+    // UseTcp indicates whether to use TCP (true) or local pipes (false)
+    UseTcp bool
+
+    // Address is the TCP address (e.g., "localhost:8080") when UseTcp is true
+    Address string
+
+    // PipeName is the socket/pipe name when UseTcp is false
+    // - Linux/Mac: Path like "/tmp/go_rpc.sock"
+    // - Windows: Name like "go_rpc"
+    PipeName string
+}
+```
+
+### Client Methods
+
+#### `NewRpcClient(config RpcClientConfig) *RpcClient`
+
+Creates a new RPC client instance with the given configuration.
+
+#### `Start() error`
+
+Connects to the server with `context.Background()`. Non-blocking.
+
+#### `StartWithContext(ctx context.Context) error`
+
+Connects to the server with a custom context. When the context is cancelled, the client performs graceful shutdown. This is the recommended method.
+
+#### `Shutdown() error`
+
+Initiates graceful shutdown: closes connection and waits for goroutines to finish.
+
+#### `IsConnected() bool`
+
+Returns whether the client is currently connected to the server.
+
+#### `SetNotificationHandler(handler NotificationHandler)`
+
+Sets the handler for all incoming notifications. Called asynchronously.
+
+```go
+client.SetNotificationHandler(func(notification rpc.Notification) {
+    // Handle notification
+})
+```
+
+#### `SetErrorHandler(handler ErrorHandler)`
+
+Sets the handler for client errors. Called when errors occur.
+
+```go
+client.SetErrorHandler(func(err error) {
+    log.Printf("Client error: %v", err)
+})
+```
+
+#### `SendCommand(cmdParams CommandParams, handler ResponseHandler) (string, error)`
+
+Sends a command to the server. Non-blocking - the handler is called when the response arrives.
+
+```go
+requestID, err := client.SendCommand(rpc.CommandParams{
+    Action: rpc.CommandTypeStart,
+    Process: &cmd.ProcessRequest{
+        Name:    "my-process",
+        Command: "bash",
+        Args:    []string{"-c", "echo Hello"},
+    },
+}, func(response rpc.Response) {
+    // Handle response asynchronously
+    log.Printf("Response: %+v", response)
+})
+```
+
+#### `SendEvent(eventParams EventParams, handler ResponseHandler) (string, error)`
+
+Sends a custom event to the server. Non-blocking - the handler is called when the response arrives.
+
+```go
+requestID, err := client.SendEvent(rpc.EventParams{
+    Name: "health_check",
+    Data: nil,
+}, func(response rpc.Response) {
+    // Handle response asynchronously
+    log.Printf("Health check result: %+v", response)
+})
+```
+
+#### `SendMessage(msg Message) error`
+
+Sends a raw message to the server. Lower-level method for advanced use cases.
+
+### Client Example: Complete Workflow
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+    "github.com/utsav-56/go-json-rpc/rpc"
+    "github.com/utsav-56/go-json-rpc/cmd"
+)
+
+func main() {
+    // Create context
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+
+    // Configure and create client
+    client := rpc.NewRpcClient(rpc.RpcClientConfig{
+        UseTcp:  true,
+        Address: "localhost:8080",
+    })
+
+    // Set up handlers
+    client.SetNotificationHandler(func(notif rpc.Notification) {
+        // Handle all notifications
+        log.Printf("Notification: %+v", notif)
+    })
+
+    client.SetErrorHandler(func(err error) {
+        log.Printf("Error: %v", err)
+    })
+
+    // Connect
+    if err := client.StartWithContext(ctx); err != nil {
+        log.Fatal(err)
+    }
+    defer client.Shutdown()
+
+    // Start a process (non-blocking)
+    client.SendCommand(rpc.CommandParams{
+        Action: rpc.CommandTypeStart,
+        Process: &cmd.ProcessRequest{
+            Name:    "demo",
+            Command: "echo",
+            Args:    []string{"Hello, World!"},
+        },
+    }, func(resp rpc.Response) {
+        if resp.Type == rpc.ResponseTypeSuccess {
+            log.Println("Process started successfully")
+        }
+    })
+
+    // Get status (non-blocking)
+    client.SendCommand(rpc.CommandParams{
+        Action: rpc.CommandTypeGetStatus,
+        Name:   "demo",
+    }, func(resp rpc.Response) {
+        log.Printf("Status: %+v", resp.Result)
+    })
+
+    // Wait a bit for responses
+    time.Sleep(2 * time.Second)
+}
+```
+
+### Client Features
+
+- **Non-Blocking Operations**: All send operations return immediately
+- **Handler-Based Responses**: Responses are delivered via callbacks
+- **Automatic Request Tracking**: Request IDs are generated automatically
+- **Notification Streaming**: Real-time notifications via dedicated handler
+- **Error Handling**: Errors are delivered via error handler
+- **Graceful Shutdown**: Proper cleanup on disconnect
+- **Thread-Safe**: All operations are safe for concurrent use
+- **Cross-Platform**: Supports TCP and platform-specific pipes
 
 ### Graceful Shutdown
 
@@ -553,15 +781,19 @@ Based on typical workloads:
 go_json_rpc/
 ├── cmd/                    # Process management package
 │   └── cmd.go             # Process lifecycle and monitoring
-├── rpc/                   # JSON-RPC server package
+├── rpc/                   # JSON-RPC server and client package
 │   ├── rpc.go            # Server implementation
+│   ├── client.go         # Client implementation
 │   ├── message.go        # Protocol types and messages
 │   ├── connections.go    # Client connection management
 │   ├── serve_unix.go     # Unix/Linux server implementation
-│   └── serve_windows.go  # Windows server implementation
+│   ├── serve_windows.go  # Windows server implementation
+│   ├── client_unix.go    # Unix/Linux client implementation
+│   └── client_windows.go # Windows client implementation
 ├── example/              # Example implementations
 │   ├── main.go          # Server example with custom events
-│   └── client.go        # Client example with all features
+│   ├── client.go        # Simple synchronous client example
+│   └── advanced_client.go # Advanced async client with handlers
 ├── dart_client/         # Dart client implementation
 └── README.md           # This file
 ```
@@ -582,6 +814,15 @@ go_json_rpc/
    ```
 
 ### New Features
+
+- **RPC Client Library**: Complete client implementation with:
+   - Non-blocking, handler-based API
+   - Context-based lifecycle management
+   - Automatic request ID generation and response tracking
+   - Dedicated notification and error handlers
+   - Cross-platform support (TCP, Unix sockets, Windows pipes)
+   - Graceful shutdown with proper cleanup
+   - Thread-safe operations
 
 - **Cross-Platform Communication**: Support for both TCP and local pipes/sockets
    - TCP connections for network access (cross-platform)
@@ -646,20 +887,29 @@ If you're upgrading from v1.x:
 
 ## Building Examples
 
-Since both example files contain `main` functions, build them separately:
+The examples demonstrate different approaches to using the library:
+
+- `main.go`: Server with signal handling and graceful shutdown
+- `client.go`: Simple synchronous client (direct socket communication)
+- `advanced_client.go`: Advanced client using the RPC client library with handlers
+
+Build them separately since they all contain `main` functions:
 
 ```bash
 # Build server
 go build -o server example/main.go
 
-# Build client
+# Build simple client
 go build -o client example/client.go
+
+# Build advanced client (recommended)
+go build -o advanced_client example/advanced_client.go
 
 # Run server
 ./server
 
-# Run client (in another terminal)
-./client
+# Run advanced client (in another terminal)
+./advanced_client
 ```
 
 ## Contributing

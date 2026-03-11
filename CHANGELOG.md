@@ -10,6 +10,30 @@
 
 ### Added
 
+- **RPC Client Library**: Complete client implementation with comprehensive features:
+   - `RpcClient` struct with configuration-based initialization
+   - Non-blocking, handler-based API for all operations
+   - `SendCommand()` and `SendEvent()` methods with response handlers
+   - `SetNotificationHandler()` for real-time notification streaming
+   - `SetErrorHandler()` for centralized error handling
+   - Automatic request ID generation and response tracking
+   - Context-based lifecycle with `Start()` and `StartWithContext()`
+   - Graceful shutdown with `Shutdown()` method
+   - `IsConnected()` status checking
+   - Cross-platform support (TCP, Unix sockets, Windows pipes)
+   - Thread-safe operations with proper synchronization
+   - Platform-specific implementations in `client_unix.go` and `client_windows.go`
+
+- **Client Configuration Structure**:
+
+   ```go
+   type RpcClientConfig struct {
+       UseTcp   bool   // Use TCP (true) or local pipes (false)
+       Address  string // TCP address (when UseTcp is true)
+       PipeName string // Socket/pipe name (when UseTcp is false)
+   }
+   ```
+
 - **Cross-Platform Communication Support**:
    - TCP connections for network access (works on all platforms)
    - Unix sockets for Linux/Mac (faster local communication)
@@ -99,7 +123,36 @@ cancel()
 server.Shutdown()
 ```
 
-**Step 3: Optional - Use Local Pipes for Better Performance**
+**Step 3: Optional - Use RPC Client Library**
+
+```go
+// Create client
+client := rpc.NewRpcClient(rpc.RpcClientConfig{
+    UseTcp:  true,
+    Address: "localhost:8080",
+})
+
+// Set handlers
+client.SetNotificationHandler(func(notif rpc.Notification) {
+    log.Printf("Notification: %+v", notif)
+})
+
+// Connect
+if err := client.StartWithContext(ctx); err != nil {
+    log.Fatal(err)
+}
+defer client.Shutdown()
+
+// Send commands (non-blocking)
+client.SendCommand(rpc.CommandParams{
+    Action: rpc.CommandTypeStart,
+    Process: &cmd.ProcessRequest{Name: "test", Command: "echo", Args: []string{"hello"}},
+}, func(resp rpc.Response) {
+    log.Printf("Response: %+v", resp)
+})
+```
+
+**Step 4: Optional - Use Local Pipes for Better Performance**
 
 ```go
 // Unix/Linux
@@ -117,6 +170,17 @@ config := rpc.RpcServerConfig{
 }
 ```
 
+### Examples Added
+
+- **example/advanced_client.go**: Comprehensive client example demonstrating:
+   - Handler-based non-blocking operations
+   - Notification streaming with dedicated handler
+   - Error handling with error handler
+   - Graceful shutdown with signal handling
+   - All command types (start, stop, get_status, get_logs)
+   - Custom event invocation
+   - Pretty-printed responses
+
 ### Platform-Specific Notes
 
 **Linux/Mac (Unix Sockets)**:
@@ -124,19 +188,22 @@ config := rpc.RpcServerConfig{
 - Socket file is automatically removed on server start
 - Socket file is cleaned up during graceful shutdown
 - Faster than TCP for local communication
-- Client: `net.Dial("unix", "/tmp/my_app.sock")`
+- Server: `net.Listen("unix", "/tmp/my_app.sock")`
+- Client: `net.Dial("unix", "/tmp/my_app.sock")` or use `RpcClient`
 
 **Windows (Named Pipes)**:
 
 - Uses `github.com/Microsoft/go-winio` for pipe support
 - Pipe names automatically prefixed with `\\.\pipe\`
-- Client: `winio.DialPipe(`\\.\pipe\my_app`, nil)`
+- Server: `winio.ListenPipe(`\\.\pipe\my_app`, nil)`
+- Client: `winio.DialPipe(`\\.\pipe\my_app`, nil)` or use `RpcClient`
 
 **Cross-Platform (TCP)**:
 
 - Works on all platforms without additional dependencies
 - Required for network communication
-- Client: `net.Dial("tcp", "localhost:8080")`
+- Server: `net.Listen("tcp", ":8080")`
+- Client: `net.Dial("tcp", "localhost:8080")` or use `RpcClient`
 
 ### Examples Updated
 

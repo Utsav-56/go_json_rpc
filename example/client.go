@@ -3,7 +3,8 @@
 // and handle real-time notifications from the server.
 // The client shows examples of starting processes, querying status, retrieving logs,
 // and calling custom events.
-// NOTE: This file should be built separately from main.go
+// NOTE: This is a simple synchronous example. For advanced usage with handlers and
+// non-blocking operations, see advanced_client.go
 // Build with: go build -o client client.go
 package main
 
